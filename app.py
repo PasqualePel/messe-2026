@@ -64,27 +64,46 @@ def crea_pdf_mensile(mese_numero, nome_mese):
     
     for domenica in domeniche_del_mese:
         data_str = domenica.strftime("%d/%m/%Y")
+        
+        # Variabile per non ripetere la data troppe volte (opzionale, ma sta meglio)
+        prima_riga_domenica = True 
+        
         for nome_comunita, orari in comunita_orari.items():
-            for orario in orari:
+            for idx, orario in enumerate(orari):
                 key_id = f"{data_str}_{nome_comunita}_{orario}"
                 dati_salvati = st.session_state['dati_messe'].get(key_id, {})
+                
                 cel = dati_salvati.get('celebrante', "Selecionar...")
                 if cel == "Selecionar...": cel = "---"
                 nota = dati_salvati.get('note', "")
                 
-                # Encoding
-                com_enc = nome_comunita.encode('latin-1', 'replace').decode('latin-1')
+                # --- LOGICA VISIVA ---
+                # 1. Gestione Data: La scriviamo solo alla prima riga della domenica? 
+                # Se vuoi la data su tutte le righe, lascia così. Se la vuoi una volta sola, dimmelo.
+                data_visualizzata = data_str 
+                
+                # 2. Gestione Comunità: Scriviamo il nome solo se è il primo orario (idx == 0)
+                if idx == 0:
+                    comunita_visualizzata = nome_comunita
+                else:
+                    comunita_visualizzata = "" # Lasciamo vuoto per il secondo orario
+                
+                # Encoding caratteri
+                com_enc = comunita_visualizzata.encode('latin-1', 'replace').decode('latin-1')
                 cel_enc = cel.encode('latin-1', 'replace').decode('latin-1')
                 nota_enc = nota.encode('latin-1', 'replace').decode('latin-1')
 
-                pdf.cell(25, 7, data_str, 1)
+                pdf.cell(25, 7, data_visualizzata, 1)
                 pdf.cell(45, 7, com_enc, 1)
                 pdf.cell(15, 7, orario, 1, 0, 'C')
                 pdf.cell(50, 7, cel_enc, 1)
                 pdf.cell(55, 7, nota_enc, 1, 1)
+                
+                prima_riga_domenica = False
         
+        # Riga separatrice grigia tra una domenica e l'altra
         pdf.set_fill_color(245, 245, 245)
-        pdf.cell(190, 2, "", 1, 1, 'C', 1) # Riga separatrice
+        pdf.cell(190, 2, "", 1, 1, 'C', 1) 
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -108,55 +127,44 @@ for i, mese_num in enumerate(mesi):
         st.write("---")
         
         # --- Sezione Calendario ---
-        # Filtriamo le domeniche per questo mese
         domeniche_mese = [d for d in domeniche_2026 if d.month == mese_num]
         
         for domenica in domeniche_mese:
             data_str = domenica.strftime("%d/%m/%Y")
             
-            # Usiamo un expander che è aperto (True) per default
             with st.expander(f"Domingo {data_str}", expanded=True):
                 
-                # Intestazioni griglia
                 cols = st.columns([2, 1, 2, 2])
                 cols[0].markdown("**Comunidade**")
                 cols[1].markdown("**Hora**")
                 cols[2].markdown("**Celebrante**")
                 cols[3].markdown("**Notas**")
                 
-                # Ciclo Comunità
                 for nome_comunita, orari in comunita_orari.items():
                     for idx, orario in enumerate(orari):
                         
-                        # Creiamo colonne per ogni riga
                         riga = st.columns([2, 1, 2, 2])
                         
                         # Nome Comunità (grassetto solo al primo orario)
                         if idx == 0:
                             riga[0].markdown(f"**{nome_comunita}**")
                         else:
-                            riga[0].markdown(f"↳ {nome_comunita}")
+                            riga[0].markdown(f"↳") # Piccola freccia per indicare "idem"
                             
                         riga[1].write(orario)
                         
-                        # Logica salvataggio
                         key_id = f"{data_str}_{nome_comunita}_{orario}"
                         saved = st.session_state['dati_messe'].get(key_id, {})
                         
-                        # Menu Celebrante
                         val_cel = saved.get('celebrante', "Selecionar...")
                         idx_cel = celebranti.index(val_cel) if val_cel in celebranti else 0
                         cel_scelto = riga[2].selectbox("Cel", celebranti, key=f"s_{key_id}", index=idx_cel, label_visibility="collapsed")
                         
-                        # Nota
                         val_nota = saved.get('note', "")
                         nota_scritta = riga[3].text_input("N", key=f"n_{key_id}", value=val_nota, label_visibility="collapsed")
                         
-                        # Aggiorna memoria
                         st.session_state['dati_messe'][key_id] = {
                             "celebrante": cel_scelto,
                             "note": nota_scritta
                         }
-                    
-                    # Separatore sottile tra comunità
                     st.write("")
