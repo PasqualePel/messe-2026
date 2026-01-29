@@ -4,10 +4,9 @@ from fpdf import FPDF
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Gestão de Missas 2026", layout="wide")
-
 st.title("⛪ Gestão de Turnos de Missas - 2026")
 
-# --- 1. DATI (Le liste) ---
+# --- 1. DATI ---
 celebranti = [
     "Selecionar...", 
     "Pe. Pasquale", "Pe. Márcio", "Pe. Stefano", "Pe. Roberto",
@@ -43,16 +42,19 @@ domeniche_2026 = get_sundays(2026)
 if 'dati_messe' not in st.session_state:
     st.session_state['dati_messe'] = {}
 
+def safe_encode(text):
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def crea_pdf_mensile(mese_numero, nome_mese):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Escala de Missas - {nome_mese} 2026", ln=True, align="C")
+    pdf.cell(0, 10, safe_encode(f"Escala de Missas - {nome_mese} 2026"), ln=True, align="C")
     pdf.ln(5)
     pdf.set_font("Arial", size=10)
     
-    # Intestazioni PDF
+    # Intestazioni
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(25, 7, "Data", 1, 0, 'C', 1)
     pdf.cell(45, 7, "Comunidade", 1, 0, 'C', 1)
@@ -65,45 +67,69 @@ def crea_pdf_mensile(mese_numero, nome_mese):
     for domenica in domeniche_del_mese:
         data_str = domenica.strftime("%d/%m/%Y")
         
-        # Variabile per non ripetere la data troppe volte (opzionale, ma sta meglio)
-        prima_riga_domenica = True 
-        
         for nome_comunita, orari in comunita_orari.items():
-            for idx, orario in enumerate(orari):
-                key_id = f"{data_str}_{nome_comunita}_{orario}"
-                dati_salvati = st.session_state['dati_messe'].get(key_id, {})
+            
+            # --- CASO A: Comunità con 2 Orari (Celle Unite) ---
+            if len(orari) == 2:
+                # Salviamo la posizione iniziale (X, Y)
+                x_start = pdf.get_x()
+                y_start = pdf.get_y()
+                row_height = 7
                 
-                cel = dati_salvati.get('celebrante', "Selecionar...")
-                if cel == "Selecionar...": cel = "---"
-                nota = dati_salvati.get('note', "")
+                # 1. Disegna la colonna DATA (alta 14)
+                pdf.cell(25, row_height * 2, data_str, 1, 0, 'C')
                 
-                # --- LOGICA VISIVA ---
-                # 1. Gestione Data: La scriviamo solo alla prima riga della domenica? 
-                # Se vuoi la data su tutte le righe, lascia così. Se la vuoi una volta sola, dimmelo.
-                data_visualizzata = data_str 
+                # 2. Disegna la colonna COMUNITA (alta 14) - Questo unisce le righe
+                pdf.cell(45, row_height * 2, safe_encode(nome_comunita), 1, 0, 'L')
                 
-                # 2. Gestione Comunità: Scriviamo il nome solo se è il primo orario (idx == 0)
-                if idx == 0:
-                    comunita_visualizzata = nome_comunita
-                else:
-                    comunita_visualizzata = "" # Lasciamo vuoto per il secondo orario
+                # Salviamo la X dove iniziano le colonne degli orari
+                x_split = pdf.get_x()
                 
-                # Encoding caratteri
-                com_enc = comunita_visualizzata.encode('latin-1', 'replace').decode('latin-1')
-                cel_enc = cel.encode('latin-1', 'replace').decode('latin-1')
-                nota_enc = nota.encode('latin-1', 'replace').decode('latin-1')
+                # --- PRIMA RIGA (Primo orario) ---
+                orario_1 = orari[0]
+                key_1 = f"{data_str}_{nome_comunita}_{orario_1}"
+                dati_1 = st.session_state['dati_messe'].get(key_1, {})
+                cel_1 = dati_1.get('celebrante', "Selecionar...")
+                if cel_1 == "Selecionar...": cel_1 = "---"
+                nota_1 = dati_1.get('note', "")
 
-                pdf.cell(25, 7, data_visualizzata, 1)
-                pdf.cell(45, 7, com_enc, 1)
-                pdf.cell(15, 7, orario, 1, 0, 'C')
-                pdf.cell(50, 7, cel_enc, 1)
-                pdf.cell(55, 7, nota_enc, 1, 1)
+                pdf.cell(15, row_height, orario_1, 1, 0, 'C')
+                pdf.cell(50, row_height, safe_encode(cel_1), 1, 0, 'L')
+                pdf.cell(55, row_height, safe_encode(nota_1), 1, 1, 'L') # ln=1 va a capo
                 
-                prima_riga_domenica = False
-        
-        # Riga separatrice grigia tra una domenica e l'altra
+                # --- SECONDA RIGA (Secondo orario) ---
+                # Spostiamo il cursore manualmente sotto la prima riga, ma allineato a destra del nome
+                pdf.set_xy(x_split, y_start + row_height)
+                
+                orario_2 = orari[1]
+                key_2 = f"{data_str}_{nome_comunita}_{orario_2}"
+                dati_2 = st.session_state['dati_messe'].get(key_2, {})
+                cel_2 = dati_2.get('celebrante', "Selecionar...")
+                if cel_2 == "Selecionar...": cel_2 = "---"
+                nota_2 = dati_2.get('note', "")
+
+                pdf.cell(15, row_height, orario_2, 1, 0, 'C')
+                pdf.cell(50, row_height, safe_encode(cel_2), 1, 0, 'L')
+                pdf.cell(55, row_height, safe_encode(nota_2), 1, 1, 'L') # ln=1 va a capo, pronto per prossima comunità
+            
+            # --- CASO B: Comunità con 1 Orario (Standard) ---
+            else:
+                orario = orari[0]
+                key_id = f"{data_str}_{nome_comunita}_{orario}"
+                dati = st.session_state['dati_messe'].get(key_id, {})
+                cel = dati.get('celebrante', "Selecionar...")
+                if cel == "Selecionar...": cel = "---"
+                nota = dati.get('note', "")
+                
+                pdf.cell(25, 7, data_str, 1, 0, 'C')
+                pdf.cell(45, 7, safe_encode(nome_comunita), 1, 0, 'L')
+                pdf.cell(15, 7, orario, 1, 0, 'C')
+                pdf.cell(50, 7, safe_encode(cel), 1, 0, 'L')
+                pdf.cell(55, 7, safe_encode(nota), 1, 1, 'L')
+
+        # Separatore tra le domeniche
         pdf.set_fill_color(245, 245, 245)
-        pdf.cell(190, 2, "", 1, 1, 'C', 1) 
+        pdf.cell(190, 2, "", 1, 1, 'C', 1)
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -117,7 +143,6 @@ tabs = st.tabs(list(mesi.values()))
 
 for i, mese_num in enumerate(mesi):
     with tabs[i]:
-        # --- Sezione PDF ---
         c1, c2 = st.columns([3, 1])
         with c2:
             if st.button(f"📥 Baixar PDF {mesi[mese_num]}", key=f"pdf_{mese_num}"):
@@ -126,14 +151,12 @@ for i, mese_num in enumerate(mesi):
         
         st.write("---")
         
-        # --- Sezione Calendario ---
         domeniche_mese = [d for d in domeniche_2026 if d.month == mese_num]
         
         for domenica in domeniche_mese:
             data_str = domenica.strftime("%d/%m/%Y")
             
             with st.expander(f"Domingo {data_str}", expanded=True):
-                
                 cols = st.columns([2, 1, 2, 2])
                 cols[0].markdown("**Comunidade**")
                 cols[1].markdown("**Hora**")
@@ -141,30 +164,32 @@ for i, mese_num in enumerate(mesi):
                 cols[3].markdown("**Notas**")
                 
                 for nome_comunita, orari in comunita_orari.items():
-                    for idx, orario in enumerate(orari):
-                        
-                        riga = st.columns([2, 1, 2, 2])
-                        
-                        # Nome Comunità (grassetto solo al primo orario)
-                        if idx == 0:
-                            riga[0].markdown(f"**{nome_comunita}**")
-                        else:
-                            riga[0].markdown(f"↳") # Piccola freccia per indicare "idem"
+                    # Usiamo il container per tenere visivamente uniti gli orari
+                    with st.container():
+                        for idx, orario in enumerate(orari):
+                            riga = st.columns([2, 1, 2, 2])
                             
-                        riga[1].write(orario)
-                        
-                        key_id = f"{data_str}_{nome_comunita}_{orario}"
-                        saved = st.session_state['dati_messe'].get(key_id, {})
-                        
-                        val_cel = saved.get('celebrante', "Selecionar...")
-                        idx_cel = celebranti.index(val_cel) if val_cel in celebranti else 0
-                        cel_scelto = riga[2].selectbox("Cel", celebranti, key=f"s_{key_id}", index=idx_cel, label_visibility="collapsed")
-                        
-                        val_nota = saved.get('note', "")
-                        nota_scritta = riga[3].text_input("N", key=f"n_{key_id}", value=val_nota, label_visibility="collapsed")
-                        
-                        st.session_state['dati_messe'][key_id] = {
-                            "celebrante": cel_scelto,
-                            "note": nota_scritta
-                        }
-                    st.write("")
+                            # INTERFACCIA WEB: Mostriamo la freccetta per chiarezza durante la compilazione
+                            if idx == 0:
+                                riga[0].markdown(f"**{nome_comunita}**")
+                            else:
+                                riga[0].markdown(f"↳") 
+                                
+                            riga[1].write(orario)
+                            
+                            key_id = f"{data_str}_{nome_comunita}_{orario}"
+                            saved = st.session_state['dati_messe'].get(key_id, {})
+                            
+                            val_cel = saved.get('celebrante', "Selecionar...")
+                            idx_cel = celebranti.index(val_cel) if val_cel in celebranti else 0
+                            cel_scelto = riga[2].selectbox("Cel", celebranti, key=f"s_{key_id}", index=idx_cel, label_visibility="collapsed")
+                            
+                            val_nota = saved.get('note', "")
+                            nota_scritta = riga[3].text_input("N", key=f"n_{key_id}", value=val_nota, label_visibility="collapsed")
+                            
+                            st.session_state['dati_messe'][key_id] = {
+                                "celebrante": cel_scelto,
+                                "note": nota_scritta
+                            }
+                        # Separatore sottile
+                        st.write("")
