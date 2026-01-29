@@ -48,72 +48,88 @@ nomi_mesi = {
 }
 
 # --- FUNZIONE MAGICA: ESTRAZIONE LITURGIA ---
-@st.cache_data # Memorizza il risultato per non rileggere il PDF ogni volta che clicchi
+@st.cache_data
 def carica_liturgia_da_pdf():
     liturgia_dict = {}
-    nome_file = "calendario_2026.pdf" # Il file che hai caricato su GitHub
     
-    if not os.path.exists(nome_file):
-        return {} # Se non trova il file, restituisce vuoto senza rompersi
+    # Tentiamo diversi nomi possibili per il file
+    nomi_possibili = ["calendario_2026.pdf", "calendario-liturgico-2026-definitivo.pdf"]
+    nome_file_trovato = None
+    
+    for nome in nomi_possibili:
+        if os.path.exists(nome):
+            nome_file_trovato = nome
+            break
+            
+    if not nome_file_trovato:
+        st.error(f"⚠️ ATTENZIONE: Non trovo il file PDF del calendario! Assicurati di averlo caricato su GitHub con il nome: calendario_2026.pdf")
+        return {}
 
     try:
-        with pdfplumber.open(nome_file) as pdf:
+        with pdfplumber.open(nome_file_trovato) as pdf:
             full_text = ""
             for page in pdf.pages:
-                full_text += page.extract_text() + "\n"
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n"
             
-            # Pulizia base del testo
             lines = full_text.split('\n')
             
-            # Logica di estrazione: Cerchiamo le date (es: "11 JANEIRO")
             current_date = None
             buffer_text = []
+            
+            # Regex più flessibile: permette spazi all'inizio (^\s*)
+            regex_data = r"^\s*(\d{1,2})\s+(JANEIRO|FEVEREIRO|MARÇO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)"
             
             for line in lines:
                 line = line.strip()
                 if not line: continue
                 
-                # Regex per trovare date tipo "01 JANEIRO" o "1 JANEIRO"
-                match = re.match(r"^(\d{1,2})\s+(JANEIRO|FEVEREIRO|MARÇO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)", line.upper())
+                match = re.search(regex_data, line.upper())
                 
                 if match:
-                    # Se avevamo già una data aperta, salviamo il testo accumulato
+                    # Salviamo la data precedente
                     if current_date and buffer_text:
-                        # Uniamo il testo e puliamo
                         descrizione = " ".join(buffer_text)
-                        # Prendiamo solo la parte essenziale (titolo + letture)
-                        # Spesso nel calendario c'è scritto "DOMINGO..."
                         liturgia_dict[current_date] = descrizione
                     
-                    # Nuova data trovata
+                    # Nuova data
                     giorno, mese_nome = match.groups()
-                    # Convertiamo mese nome in numero
                     mese_num = [k for k, v in nomi_mesi.items() if v == mese_nome][0]
                     
                     try:
                         current_date = datetime.date(2026, mese_num, int(giorno))
-                        buffer_text = [line] # Iniziamo a salvare da questa riga (che contiene il titolo)
+                        # Puliamo la riga dalla data per tenere solo il titolo della festa
+                        # Es: "11 JANEIRO BATTESIMO" -> "BATTESIMO"
+                        resto_della_riga = re.sub(regex_data, "", line.upper(), count=1).strip()
+                        buffer_text = [resto_della_riga] 
                     except:
                         current_date = None
                 
                 elif current_date:
-                    # Se siamo dentro una data, continuiamo ad accumulare testo
-                    # Fermiamoci se troviamo linee che sembrano numeri di pagina o spazzatura
-                    if len(buffer_text) < 4: # Prendiamo max 3-4 righe di descrizione per non intasare
+                    # Raccogliamo massimo 5 righe per non prendere troppa roba inutile
+                    if len(buffer_text) < 5: 
                         buffer_text.append(line)
             
-            # Salva l'ultimo blocco
             if current_date and buffer_text:
                 liturgia_dict[current_date] = " ".join(buffer_text)
                 
     except Exception as e:
-        st.warning(f"Non riesco a leggere il calendario liturgico: {e}")
+        st.warning(f"Errore nella lettura del PDF: {e}")
         return {}
 
     return liturgia_dict
 
-# Carichiamo la liturgia all'avvio
+# Carichiamo la liturgia
 mappa_liturgica = carica_liturgia_da_pdf()
+
+# --- SIDEBAR DI CONTROLLO (DEBUG) ---
+with st.sidebar:
+    st.header("🔍 Controllo Calendario")
+    if mappa_liturgica:
+        st.success(f"Ho trovato {len(mappa_liturgica)} date nel PDF!")
+    else:
+        st.warning("Non ho trovato nessuna data nel PDF. Controlla il formato.")
 
 # --- CALCOLO DOMENICHE ---
 domeniche_2026 = []
@@ -125,7 +141,6 @@ while d.year == 2026:
 
 def safe_encode(text):
     if text == "nan" or text == "None": return ""
-    # Rimuoviamo caratteri strani che rompono il PDF
     text = text.replace('–', '-').replace('“', '"').replace('”', '"')
     return text.encode('latin-1', 'replace').decode('latin-1')
 
@@ -169,7 +184,6 @@ def crea_pdf_mensile(mese_numero, nome_mese):
     pdf.ln(2)
     
     doms = [x for x in domeniche_2026 if x.month == mese_numero]
-    
     def get_print(k):
         r = df_print[df_print['key_id'] == k]
         if not r.empty:
@@ -188,24 +202,18 @@ def crea_pdf_mensile(mese_numero, nome_mese):
         elif i > 0:
             pdf.ln(8)
 
-        # --- RECUPERO LITURGIA DAL DIZIONARIO ---
-        # Cerchiamo se c'è testo per questa data
+        # LITURGIA PDF
         testo_liturgia = mappa_liturgica.get(domenica, "")
         if testo_liturgia:
-            # Puliamo un po' la stringa (togliamo la data iniziale che abbiamo già)
-            # Esempio: "11 JANEIRO BATISMO..." -> "BATISMO..."
-            pattern_data = f"{domenica.day} {nomi_mesi[domenica.month]}"
-            testo_liturgia = testo_liturgia.replace(pattern_data, "").strip()
-            # Tronchiamo se è troppo lungo per il titolo
-            if len(testo_liturgia) > 130: testo_liturgia = testo_liturgia[:130] + "..."
-            
+             # Formattiamo meglio: mettiamo il titolo su una riga e le letture sotto se possibile
             header_text = f"Dom, {domenica.day}/{domenica.month} - {testo_liturgia}"
         else:
             header_text = f"Domingo, {domenica.day} {nomi_mesi[domenica.month]}"
 
+        # Stampiamo l'intestazione grigia
         pdf.set_font("Arial", "B", 10)
         pdf.set_fill_color(220, 220, 220)
-        # Multicell per gestire testi lunghi su più righe se la liturgia è lunga
+        # Usiamo multi_cell per gestire testo lungo che va a capo automaticamente
         pdf.multi_cell(190, 6, safe_encode(header_text), 1, 'L', 1)
         
         pdf.set_font("Arial", "B", 8)
@@ -224,24 +232,21 @@ def crea_pdf_mensile(mese_numero, nome_mese):
                 x_split = pdf.get_x()
                 
                 k1 = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[0]}"
-                c1, n1 = get_print(k1)
-                if c1 == "Selecionar...": c1 = "---"
+                c1, n1 = get_print(k1); c1 = c1 if c1 != "Selecionar..." else "---"
                 pdf.cell(w_ora, h, orari[0], 1, 0, 'C')
                 pdf.cell(w_cel, h, safe_encode(c1), 1, 0, 'L')
                 pdf.cell(w_not, h, safe_encode(n1), 1, 1, 'L')
                 
                 pdf.set_xy(x_split, y + h)
                 k2 = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[1]}"
-                c2, n2 = get_print(k2)
-                if c2 == "Selecionar...": c2 = "---"
+                c2, n2 = get_print(k2); c2 = c2 if c2 != "Selecionar..." else "---"
                 pdf.cell(w_ora, h, orari[1], 1, 0, 'C')
                 pdf.cell(w_cel, h, safe_encode(c2), 1, 0, 'L')
                 pdf.cell(w_not, h, safe_encode(n2), 1, 1, 'L')
             else:
                 h = 6
                 k = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[0]}"
-                c, n = get_print(k)
-                if c == "Selecionar...": c = "---"
+                c, n = get_print(k); c = c if c != "Selecionar..." else "---"
                 pdf.cell(w_com, h, safe_encode(nome_comunita), 1, 0, 'L')
                 pdf.cell(w_ora, h, orari[0], 1, 0, 'C')
                 pdf.cell(w_cel, h, safe_encode(c), 1, 0, 'L')
@@ -249,7 +254,7 @@ def crea_pdf_mensile(mese_numero, nome_mese):
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# --- INTERFACCIA ---
+# --- INTERFACCIA WEB ---
 tabs = st.tabs(list(nomi_mesi.values()))
 
 for i, mese_num in enumerate(nomi_mesi):
@@ -263,24 +268,15 @@ for i, mese_num in enumerate(nomi_mesi):
         
         doms = [x for x in domeniche_2026 if x.month == mese_num]
         for d in doms:
-            # Recupero testo liturgia per l'interfaccia
             lit_text = mappa_liturgica.get(d, "")
-            # Pulizia per visualizzazione web
-            pattern_data = f"{d.day} {nomi_mesi[d.month]}"
-            if lit_text:
-                lit_text = lit_text.replace(pattern_data, "").strip()
-                # Prendiamo solo la prima riga (il titolo) per l'interfaccia, per non ingombrare
-                titolo_breve = lit_text.split('\n')[0]
-                # Se c'è un trattino all'inizio, togliamolo
-                if titolo_breve.startswith("-") or titolo_breve.startswith("–"): titolo_breve = titolo_breve[1:].strip()
-                header_vis = f"Domingo, {d.day} {nomi_mesi[d.month]} | {titolo_breve}"
-            else:
-                header_vis = f"Domingo, {d.day} {nomi_mesi[d.month]}"
-
-            with st.expander(f"📅 {header_vis}", expanded=True):
-                # Se ci sono dati liturgici completi (letture), mostriamoli dentro l'expander come info
+            header_vis = f"{d.day} {nomi_mesi[d.month]}"
+            
+            with st.expander(f"📅 Domingo, {header_vis}", expanded=True):
+                # MOSTRA LITURGIA SE TROVATA
                 if lit_text:
-                    st.caption(f"📖 {lit_text}")
+                    st.info(f"📖 **Liturgia:** {lit_text}")
+                else:
+                    st.caption("Nessuna liturgia trovata nel PDF per questa data.")
 
                 cols = st.columns([2, 1, 2, 3])
                 cols[0].markdown("**Comunidade**")
