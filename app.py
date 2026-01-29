@@ -2,12 +2,12 @@ import streamlit as st
 import datetime
 from fpdf import FPDF
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Gestão de Missas", layout="wide")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="Gestão de Missas 2026", layout="wide")
 
-st.title("⛪ Gestão de Turnos de Missas - Paróquia")
+st.title("⛪ Gestão de Turnos de Missas - 2026")
 
-# --- 1. DATI ---
+# --- 1. DATI (Le liste) ---
 celebranti = [
     "Selecionar...", 
     "Pe. Pasquale", "Pe. Márcio", "Pe. Stefano", "Pe. Roberto",
@@ -52,7 +52,7 @@ def crea_pdf_mensile(mese_numero, nome_mese):
     pdf.ln(5)
     pdf.set_font("Arial", size=10)
     
-    # Intestazioni
+    # Intestazioni PDF
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(25, 7, "Data", 1, 0, 'C', 1)
     pdf.cell(45, 7, "Comunidade", 1, 0, 'C', 1)
@@ -60,7 +60,6 @@ def crea_pdf_mensile(mese_numero, nome_mese):
     pdf.cell(50, 7, "Celebrante", 1, 0, 'C', 1)
     pdf.cell(55, 7, "Notas", 1, 1, 'C', 1)
     
-    # Dati del mese
     domeniche_del_mese = [d for d in domeniche_2026 if d.month == mese_numero]
     
     for domenica in domeniche_del_mese:
@@ -69,24 +68,23 @@ def crea_pdf_mensile(mese_numero, nome_mese):
             for orario in orari:
                 key_id = f"{data_str}_{nome_comunita}_{orario}"
                 dati_salvati = st.session_state['dati_messe'].get(key_id, {})
-                
                 cel = dati_salvati.get('celebrante', "Selecionar...")
-                nota = dati_salvati.get('note', "")
                 if cel == "Selecionar...": cel = "---"
+                nota = dati_salvati.get('note', "")
                 
                 # Encoding
-                com_txt = nome_comunita.encode('latin-1', 'replace').decode('latin-1')
-                cel_txt = cel.encode('latin-1', 'replace').decode('latin-1')
-                nota_txt = nota.encode('latin-1', 'replace').decode('latin-1')
-                
+                com_enc = nome_comunita.encode('latin-1', 'replace').decode('latin-1')
+                cel_enc = cel.encode('latin-1', 'replace').decode('latin-1')
+                nota_enc = nota.encode('latin-1', 'replace').decode('latin-1')
+
                 pdf.cell(25, 7, data_str, 1)
-                pdf.cell(45, 7, com_txt, 1)
+                pdf.cell(45, 7, com_enc, 1)
                 pdf.cell(15, 7, orario, 1, 0, 'C')
-                pdf.cell(50, 7, cel_txt, 1)
-                pdf.cell(55, 7, nota_txt, 1, 1)
+                pdf.cell(50, 7, cel_enc, 1)
+                pdf.cell(55, 7, nota_enc, 1, 1)
         
         pdf.set_fill_color(245, 245, 245)
-        pdf.cell(190, 2, "", 1, 1, 'C', 1)
+        pdf.cell(190, 2, "", 1, 1, 'C', 1) # Riga separatrice
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -99,27 +97,66 @@ mesi = {
 tabs = st.tabs(list(mesi.values()))
 
 for i, mese_num in enumerate(mesi):
-    nome_mese = mesi[mese_num]
     with tabs[i]:
-        # --- ZONA ALTA: PDF ---
-        c_sx, c_dx = st.columns([3, 1])
-        with c_dx:
-            if st.button(f"📥 Baixar PDF {nome_mese}", key=f"btn_{mese_num}"):
-                pdf_data = crea_pdf_mensile(mese_num, nome_mese)
-                st.download_button("Clique para Salvar", pdf_data, f"Missas_{nome_mese}.pdf", "application/pdf")
+        # --- Sezione PDF ---
+        c1, c2 = st.columns([3, 1])
+        with c2:
+            if st.button(f"📥 Baixar PDF {mesi[mese_num]}", key=f"pdf_{mese_num}"):
+                data_pdf = crea_pdf_mensile(mese_num, mesi[mese_num])
+                st.download_button("Salvar Arquivo", data_pdf, f"Messe_{mesi[mese_num]}.pdf", "application/pdf")
         
-        st.markdown("---")
-        st.markdown(f"### 👇 INSERISCI QUI I TURNI DI: {nome_mese.upper()}")
+        st.write("---")
         
-        # --- ZONA BASSA: INPUT ---
+        # --- Sezione Calendario ---
+        # Filtriamo le domeniche per questo mese
         domeniche_mese = [d for d in domeniche_2026 if d.month == mese_num]
         
         for domenica in domeniche_mese:
             data_str = domenica.strftime("%d/%m/%Y")
             
+            # Usiamo un expander che è aperto (True) per default
             with st.expander(f"Domingo {data_str}", expanded=True):
-                # Intestazione Colonne
-                k1, k2, k3, k4 = st.columns([2, 1, 2, 2])
-                k1.caption("Comunidade")
-                k2.caption("Hora")
-                k3.caption("Celebrante")
+                
+                # Intestazioni griglia
+                cols = st.columns([2, 1, 2, 2])
+                cols[0].markdown("**Comunidade**")
+                cols[1].markdown("**Hora**")
+                cols[2].markdown("**Celebrante**")
+                cols[3].markdown("**Notas**")
+                
+                # Ciclo Comunità
+                for nome_comunita, orari in comunita_orari.items():
+                    for idx, orario in enumerate(orari):
+                        
+                        # Creiamo colonne per ogni riga
+                        riga = st.columns([2, 1, 2, 2])
+                        
+                        # Nome Comunità (grassetto solo al primo orario)
+                        if idx == 0:
+                            riga[0].markdown(f"**{nome_comunita}**")
+                        else:
+                            riga[0].markdown(f"↳ {nome_comunita}")
+                            
+                        riga[1].write(orario)
+                        
+                        # Logica salvataggio
+                        key_id = f"{data_str}_{nome_comunita}_{orario}"
+                        saved = st.session_state['dati_messe'].get(key_id, {})
+                        
+                        # Menu Celebrante
+                        val_cel = saved.get('celebrante', "Selecionar...")
+                        idx_cel = celebranti.index(val_cel) if val_cel in celebranti else 0
+                        cel_scelto = riga[2].selectbox("Cel", celebranti, key=f"s_{key_id}", index=idx_cel, label_visibility="collapsed")
+                        
+                        # Nota
+                        val_nota = saved.get('note', "")
+                        nota_scritta = riga[3].text_input("N", key=f"n_{key_id}", value=val_nota, label_visibility="collapsed")
+                        
+                        # Aggiorna memoria
+                        st.session_state['dati_messe'][key_id] = {
+                            "celebrante": cel_scelto,
+                            "note": nota_scritta
+                        }
+                    
+                    # Separatore sottile tra comunità
+                    st.write("")
