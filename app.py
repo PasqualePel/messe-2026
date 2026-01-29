@@ -39,7 +39,6 @@ comunita_orari = {
     "N.S Lurdes": ["07:30"]
 }
 
-# Nomi mesi per la visualizzazione
 nomi_mesi = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
     7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
@@ -87,18 +86,18 @@ def update_google_sheet(key, celebrante, note):
     except Exception as e:
         st.error(f"Errore salvataggio: {e}")
 
-# --- PDF MODIFICATO (Data Intestazione) ---
+# --- PDF GENERATOR ---
 def crea_pdf_mensile(mese_numero, nome_mese):
     df_print = conn.read(worksheet="Foglio1", ttl=0).astype(str)
     
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=False) # Gestiamo noi i page break per averne 2 per pagina
     pdf.add_page()
     
     # Titolo PDF
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, safe_encode(f"Escala de Missas - {nome_mese} 2026"), ln=True, align="C")
-    pdf.ln(5)
+    pdf.ln(2)
     
     domeniche_del_mese = [x for x in domeniche_2026 if x.month == mese_numero]
     
@@ -110,82 +109,89 @@ def crea_pdf_mensile(mese_numero, nome_mese):
             return (c if c!="nan" else "Selecionar..."), (n if n!="nan" else "")
         return "Selecionar...", ""
 
-    for domenica in domeniche_del_mese:
-        # --- INTESTAZIONE DATA (Barra Grigia) ---
-        # Formato: "Domingo, 1 Fevereiro"
+    # --- DIMENSIONI COLONNE (Totale 190) ---
+    w_com = 45  # Comunidade (Ridotto)
+    w_ora = 15  # Hora
+    w_cel = 55  # Celebrante (Ridotto)
+    w_not = 75  # Notas (Aumentato Molto)
+
+    for i, domenica in enumerate(domeniche_del_mese):
+        
+        # LOGICA PER 2 DOMENICHE PER PAGINA
+        # Se non è la prima domenica (i > 0) e l'indice è pari (2, 4, 6...), fai nuova pagina
+        if i > 0 and i % 2 == 0:
+            pdf.add_page()
+            # Riscrivi il titolo anche nella nuova pagina se vuoi, o lascia solo le date
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, safe_encode(f"Escala de Missas - {nome_mese} 2026"), ln=True, align="C")
+            pdf.ln(5)
+        elif i > 0:
+            # Se siamo nella stessa pagina, aggiungi spazio tra la prima e la seconda domenica
+            pdf.ln(8) 
+
+        # --- INTESTAZIONE DATA ---
         data_header = f"Domingo, {domenica.day} {nomi_mesi[domenica.month]}"
+        pdf.set_font("Arial", "B", 11)
+        pdf.set_fill_color(200, 200, 200)
+        pdf.cell(190, 7, safe_encode(data_header), 1, 1, 'L', 1)
         
-        pdf.set_font("Arial", "B", 12)
-        pdf.set_fill_color(200, 200, 200) # Grigio scuro per la data
-        # Larghezza totale pagina ~190. Scriviamo la data come un titolo di sezione
-        pdf.cell(190, 8, safe_encode(data_header), 1, 1, 'L', 1)
+        # --- INTESTAZIONE COLONNE ---
+        pdf.set_font("Arial", "B", 8)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(w_com, 6, "Comunidade", 1, 0, 'C', 1)
+        pdf.cell(w_ora, 6, "Hora", 1, 0, 'C', 1)
+        pdf.cell(w_cel, 6, "Celebrante", 1, 0, 'C', 1)
+        pdf.cell(w_not, 6, "Notas", 1, 1, 'C', 1)
         
-        # --- INTESTAZIONE COLONNE (Sotto la data) ---
-        pdf.set_font("Arial", "B", 9)
-        pdf.set_fill_color(240, 240, 240) # Grigio chiaro per le colonne
-        # NOTA: Abbiamo tolto la colonna DATA. Allarghiamo le altre.
-        # Larghezze nuove: Comunità(60), Ora(20), Celebrante(60), Note(50) = 190 Totale
-        pdf.cell(60, 6, "Comunidade", 1, 0, 'C', 1)
-        pdf.cell(20, 6, "Hora", 1, 0, 'C', 1)
-        pdf.cell(60, 6, "Celebrante", 1, 0, 'C', 1)
-        pdf.cell(50, 6, "Notas", 1, 1, 'C', 1)
+        pdf.set_font("Arial", size=9) # Font un po' più piccolo per far stare tutto
         
-        pdf.set_font("Arial", size=10)
-        
-        # --- RIGHE DELLA TABELLA ---
         for nome_comunita, orari in comunita_orari.items():
             
-            # CASO A: Celle Unite (Santa Monica / Sao Miguel)
+            # CELLE UNITE (Santa Monica / Sao Miguel)
             if len(orari) == 2:
-                # Coordinate iniziali
                 x = pdf.get_x()
                 y = pdf.get_y()
-                h = 7 # Altezza riga
+                h = 6 # Altezza riga ridotta leggermente per compattezza
                 
-                # 1. Disegna Comunità (Alta doppio: h*2)
-                pdf.cell(60, h*2, safe_encode(nome_comunita), 1, 0, 'L')
+                # Colonna Comunidade (Alta doppio)
+                pdf.cell(w_com, h*2, safe_encode(nome_comunita), 1, 0, 'L')
                 
-                # Salviamo dove inizia la colonna orari
                 x_split = pdf.get_x()
                 
-                # Riga 1 (Primo orario)
+                # Riga 1
                 k1 = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[0]}"
                 c1, n1 = get_print(k1)
                 if c1 == "Selecionar...": c1 = "---"
                 
-                pdf.cell(20, h, orari[0], 1, 0, 'C')
-                pdf.cell(60, h, safe_encode(c1), 1, 0, 'L')
-                pdf.cell(50, h, safe_encode(n1), 1, 1, 'L')
+                pdf.cell(w_ora, h, orari[0], 1, 0, 'C')
+                pdf.cell(w_cel, h, safe_encode(c1), 1, 0, 'L')
+                pdf.cell(w_not, h, safe_encode(n1), 1, 1, 'L')
                 
-                # Riga 2 (Secondo orario)
-                # Spostiamo il cursore sotto la riga 1, ma a destra della comunità
+                # Riga 2
                 pdf.set_xy(x_split, y + h)
-                
                 k2 = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[1]}"
                 c2, n2 = get_print(k2)
                 if c2 == "Selecionar...": c2 = "---"
                 
-                pdf.cell(20, h, orari[1], 1, 0, 'C')
-                pdf.cell(60, h, safe_encode(c2), 1, 0, 'L')
-                pdf.cell(50, h, safe_encode(n2), 1, 1, 'L') # Va a capo
+                pdf.cell(w_ora, h, orari[1], 1, 0, 'C')
+                pdf.cell(w_cel, h, safe_encode(c2), 1, 0, 'L')
+                pdf.cell(w_not, h, safe_encode(n2), 1, 1, 'L') 
                 
-            # CASO B: Riga Normale
             else:
+                # RIGA NORMALE
+                h = 6
                 k = f"{domenica.strftime('%d/%m/%Y')}_{nome_comunita}_{orari[0]}"
                 c, n = get_print(k)
                 if c == "Selecionar...": c = "---"
                 
-                pdf.cell(60, 7, safe_encode(nome_comunita), 1, 0, 'L')
-                pdf.cell(20, 7, orari[0], 1, 0, 'C')
-                pdf.cell(60, 7, safe_encode(c), 1, 0, 'L')
-                pdf.cell(50, 7, safe_encode(n), 1, 1, 'L')
-
-        # Spazio vuoto tra le domeniche
-        pdf.ln(5)
+                pdf.cell(w_com, h, safe_encode(nome_comunita), 1, 0, 'L')
+                pdf.cell(w_ora, h, orari[0], 1, 0, 'C')
+                pdf.cell(w_cel, h, safe_encode(c), 1, 0, 'L')
+                pdf.cell(w_not, h, safe_encode(n), 1, 1, 'L')
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# --- INTERFACCIA ---
+# --- INTERFACCIA WEB ---
 tabs = st.tabs(list(nomi_mesi.values()))
 
 for i, mese_num in enumerate(nomi_mesi):
@@ -200,12 +206,11 @@ for i, mese_num in enumerate(nomi_mesi):
         doms = [x for x in domeniche_2026 if x.month == mese_num]
         for d in doms:
             d_str = d.strftime("%d/%m/%Y")
+            data_vis = f"{d.day} {nomi_mesi[d.month]}"
             
-            # Intestazione Data in stile portoghese anche nell'interfaccia
-            data_header_visual = f"{d.day} {nomi_mesi[d.month]}"
-            
-            with st.expander(f"📅 Domingo, {data_header_visual}", expanded=True):
-                cols = st.columns([2, 1, 2, 2])
+            with st.expander(f"📅 Domingo, {data_vis}", expanded=True):
+                # Usiamo le stesse proporzioni visive anche qui
+                cols = st.columns([2, 1, 2, 3]) # Notare il 3 finale per dare più spazio alle note
                 cols[0].markdown("**Comunidade**")
                 cols[1].markdown("**Hora**")
                 cols[2].markdown("**Celebrante**")
@@ -214,7 +219,7 @@ for i, mese_num in enumerate(nomi_mesi):
                 for com, orari in comunita_orari.items():
                     with st.container():
                         for idx, orario in enumerate(orari):
-                            r = st.columns([2, 1, 2, 2])
+                            r = st.columns([2, 1, 2, 3])
                             if idx == 0: r[0].markdown(f"**{com}**")
                             else: r[0].markdown("↳")
                             r[1].write(orario)
