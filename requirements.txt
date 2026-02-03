@@ -3,3 +3,4 @@ fpdf
 pandas
 st-gsheets-connection
 pdfplumber
+xlsxwriter
