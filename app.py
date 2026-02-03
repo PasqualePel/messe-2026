@@ -3,7 +3,6 @@ import datetime
 from fpdf import FPDF
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
-import pdfplumber
 import re
 import os
 import io
@@ -40,42 +39,29 @@ nomi_mesi = {
     7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
 }
 
-# --- 3. LETTURA LITURGIA DAL PDF ---
-@st.cache_data
-def carica_liturgia():
-    path = "calendario.pdf" # Cerca questo file specifico
-    liturgia = {}
-    if not os.path.exists(path): return {}
-    try:
-        with pdfplumber.open(path) as pdf:
-            full_text = ""
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t: full_text += t + "\n"
-            regex = r"(\d{1,2})\s*(?:DE|-|\/)?\s*(JANEIRO|FEVEREIRO|MARÇO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)"
-            nomi_mesi_pdf = {"JANEIRO":1, "FEVEREIRO":2, "MARÇO":3, "ABRIL":4, "MAIO":5, "JUNHO":6, "JULHO":7, "AGOSTO":8, "SETEMBRO":9, "OUTUBRO":10, "NOVEMBRO":11, "DEZEMBRO":12}
-            lines = full_text.split('\n')
-            curr = None; buff = []
-            for line in lines:
-                l = line.strip().upper()
-                if not l: continue
-                m = re.search(regex, l)
-                if m:
-                    if curr and buff: liturgia[curr] = " ".join(buff)
-                    g, mes_txt = m.groups()
-                    try:
-                        curr = datetime.date(2026, nomi_mesi_pdf[mes_txt], int(g))
-                        clean = re.sub(regex, "", l).strip()
-                        clean = re.sub(r"^[^A-Z0-9]+", "", clean)
-                        buff = [clean]
-                    except: pass
-                elif curr and len(buff) < 5:
-                    buff.append(line.strip())
-            if curr and buff: liturgia[curr] = " ".join(buff)
-    except: pass
-    return liturgia
-
-mappa_liturgica = carica_liturgia()
+# --- 3. CALENDARIO LITURGICO BASE (DATA FISSA) ---
+# Queste date sono fisse nel codice, così non serve il PDF
+liturgia_fissa = {
+    "01/01/2026": "SANTA MÃE DE DEUS",
+    "04/01/2026": "EPIFANIA DO SENHOR",
+    "11/01/2026": "BAPTISMO DO SENHOR",
+    "18/02/2026": "CINZAS (Início da Quaresma)",
+    "29/03/2026": "DOMINGO DE RAMOS",
+    "05/04/2026": "PÁSCOA DA RESSURREIÇÃO",
+    "12/04/2026": "DOMINGO DA MISERICÓRDIA",
+    "24/05/2026": "PENTECOSTES",
+    "31/05/2026": "SANTÍSSIMA TRINDADE",
+    "07/06/2026": "CORPO E SANGUE DE CRISTO",
+    "12/06/2026": "SAGRADO CORAÇÃO DE JESUS",
+    "29/06/2026": "SÃO PEDRO E SÃO PAULO",
+    "15/08/2026": "ASSUNÇÃO DE NOSSA SENHORA",
+    "01/11/2026": "TODOS OS SANTOS",
+    "22/11/2026": "CRISTO REI DO UNIVERSO",
+    "29/11/2026": "1º DOMINGO DO ADVENTO",
+    "08/12/2026": "IMACULADA CONCEIÇÃO",
+    "25/12/2026": "NATAL DO SENHOR",
+    "27/12/2026": "SAGRADA FAMÍLIA"
+}
 
 # --- 4. FUNZIONI DATABASE ---
 def get_data_full(key):
@@ -104,30 +90,42 @@ def safe_encode(text):
     if text == "nan" or text is None: return ""
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-# --- 5. GENERATORE EXCEL COMPLETO 2026 ---
+# --- 5. GENERATORE EXCEL AVANZATO ---
 def genera_excel_annuale():
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     
-    # Foglio dati nascosto per i menu a tendina
+    # Foglio dati nascosto
     ws_data = workbook.add_worksheet("Dati_Ref")
     ws_data.hide()
     ws_data.write_column('A1', celebranti)
 
-    # Stili Excel
+    # Stili
     fmt_title = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1})
     fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
-    fmt_date = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'left'})
-    fmt_normal = workbook.add_format({'border': 1, 'align': 'left'})
-    fmt_center = workbook.add_format({'border': 1, 'align': 'center'})
+    
+    # Stile per la Liturgia (Riga intera)
+    fmt_liturgia = workbook.add_format({'bold': True, 'bg_color': '#FFF2CC', 'border': 1, 'align': 'left', 'valign': 'vcenter', 'font_color': '#9C5700'})
+    
+    # Stile per la Data (Unita Verticalmente)
+    fmt_date_merged = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
+    
+    # Stile per Comunità (Unita Verticalmente)
+    fmt_com_merged = workbook.add_format({'border': 1, 'align': 'left', 'valign': 'vcenter', 'text_wrap': True})
+    
+    fmt_normal = workbook.add_format({'border': 1, 'align': 'left', 'valign': 'vcenter'})
+    fmt_center = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
-    # Generiamo 12 fogli (uno per mese)
+    # Generiamo 12 fogli
     for m_num in range(1, 13):
         m_nome = nomi_mesi[m_num]
         ws = workbook.add_worksheet(m_nome)
         
-        ws.set_column('A:A', 15); ws.set_column('B:B', 30); ws.set_column('C:C', 10)
-        ws.set_column('D:D', 30); ws.set_column('E:E', 40)
+        ws.set_column('A:A', 15) # Data
+        ws.set_column('B:B', 30) # Comunità
+        ws.set_column('C:C', 10) # Ora
+        ws.set_column('D:D', 30) # Celebrante
+        ws.set_column('E:E', 40) # Note
         
         ws.merge_range('A1:E1', f"ESCALA - {m_nome.upper()} 2026", fmt_title)
         headers = ["Data", "Comunidade", "Hora", "Celebrante", "Notas"]
@@ -135,43 +133,63 @@ def genera_excel_annuale():
         
         row = 2
         d = datetime.date(2026, 1, 1)
-        d += datetime.timedelta(days=(6 - d.weekday() if d.weekday() <= 6 else 7)) # Prima domenica
+        d += datetime.timedelta(days=(6 - d.weekday() if d.weekday() <= 6 else 7)) 
         
         while d.year == 2026:
             if d.month == m_num:
                 d_str = d.strftime("%d/%m/%Y")
                 
-                # --- RECUPERO DATI DAL SITO PER RIEMPIRE EXCEL ---
+                # --- RECUPERO LITURGIA ---
+                # 1. Controlla se hai scritto qualcosa a mano (DB)
                 lit_key = f"LIT_{d_str}"
                 r_lit = df_dati[df_dati['key_id'] == lit_key]
                 lit_db = r_lit.iloc[0]['liturgia_custom'] if not r_lit.empty and r_lit.iloc[0]['liturgia_custom'] != "nan" else ""
                 
-                # Se non c'è nel DB, usiamo il PDF
-                lit_finale = lit_db if lit_db else mappa_liturgica.get(d, "")
+                # 2. Se vuoto, controlla il calendario fisso (Pasqua, Natale, ecc.)
+                lit_finale = lit_db if lit_db else liturgia_fissa.get(d_str, "")
                 
-                txt_dom = f"Domingo, {d.day} de {m_nome}" + (f" - {lit_finale}" if lit_finale else "")
-                ws.merge_range(row, 0, row, 4, txt_dom, fmt_date)
-                row += 1
+                # RIGA LITURGIA (Sopra)
+                if lit_finale:
+                    ws.merge_range(row, 0, row, 4, f"LITURGIA: {lit_finale}", fmt_liturgia)
+                    row += 1
                 
+                # BLOCCO DOMENICA
+                tot_righe = sum(len(x) for x in comunita_orari.values())
+                start_row = row
+                
+                # Colonna DATA unita
+                nome_mese_bello = nomi_mesi[m_num]
+                txt_data = f"Domingo\n{d.day} de {nome_mese_bello}"
+                ws.merge_range(start_row, 0, start_row + tot_righe - 1, 0, txt_data, fmt_date_merged)
+                
+                current_r = start_row
                 for com, orari in comunita_orari.items():
+                    n_orari = len(orari)
+                    
+                    # Colonna COMUNITA unita
+                    if n_orari > 1:
+                        ws.merge_range(current_r, 1, current_r + n_orari - 1, 1, com, fmt_com_merged)
+                    else:
+                        ws.write(current_r, 1, com, fmt_normal)
+                    
+                    # Orari, Preti, Note
                     for ora in orari:
                         kid = f"{d_str}_{com}_{ora}"
-                        # Cerchiamo preti già inseriti
                         r_cel = df_dati[df_dati['key_id'] == kid]
                         cel_val = r_cel.iloc[0]['celebrante'] if not r_cel.empty and r_cel.iloc[0]['celebrante'] not in ["nan", "Selecionar..."] else ""
                         note_val = r_cel.iloc[0]['note'] if not r_cel.empty and r_cel.iloc[0]['note'] != "nan" else ""
 
-                        ws.write(row, 0, d_str, fmt_center)
-                        ws.write(row, 1, com, fmt_normal)
-                        ws.write(row, 2, ora, fmt_center)
+                        ws.write(current_r, 2, ora, fmt_center)
                         
-                        # Celebrante con menu a tendina
-                        ws.write(row, 3, cel_val, fmt_normal)
-                        ws.data_validation(row, 3, row, 3, {'validate': 'list', 'source': f'=Dati_Ref!$A$1:$A${len(celebranti)}'})
+                        # Menu a tendina
+                        ws.write(current_r, 3, cel_val, fmt_normal)
+                        ws.data_validation(current_r, 3, current_r, 3, {'validate': 'list', 'source': f'=Dati_Ref!$A$1:$A${len(celebranti)}'})
                         
-                        ws.write(row, 4, note_val, fmt_normal)
-                        row += 1
-                row += 1
+                        ws.write(current_r, 4, note_val, fmt_normal)
+                        current_r += 1
+                
+                row = current_r + 1 # Spazio vuoto
+
             d += datetime.timedelta(days=7)
             
     workbook.close()
@@ -197,7 +215,11 @@ def crea_pdf_mensile(m_num, m_nome):
         
         kl = f"LIT_{dom.strftime('%d/%m/%Y')}"; rl = df_p[df_p['key_id']==kl]
         tit = rl.iloc[0]['liturgia_custom'] if not rl.empty and rl.iloc[0]['liturgia_custom']!="nan" else ""
-        head = f"Domingo, {dom.day} de {m_nome}" + (f" - {tit}" if tit else mappa_liturgica.get(dom, ""))
+        # Usa il dizionario fisso se non c'è nulla nel DB
+        if not tit:
+             tit = liturgia_fissa.get(dom.strftime('%d/%m/%Y'), "")
+
+        head = f"Domingo, {dom.day} de {m_nome}" + (f" - {tit}" if tit else "")
         
         pdf.set_font("Arial","B",10); pdf.set_fill_color(220,220,220)
         pdf.multi_cell(190, 6, safe_encode(head), 1, 'L', 1)
@@ -236,7 +258,6 @@ with st.sidebar:
     
     # TASTO EXCEL COMPLETO (OFFLINE)
     st.markdown("### 💾 Backup Excel Offline")
-    st.info("Baixe todo o ano de 2026 em Excel para trabalhar no seu PC.")
     if st.button("📥 Baixar Excel Completo 2026"):
         excel_data = genera_excel_annuale()
         st.download_button("Salvar no PC", excel_data, "Turni_Messe_2026_Completo.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -261,7 +282,8 @@ while d.year == 2026:
 for d in doms_m:
     d_fmt = d.strftime("%d/%m/%Y")
     kl = f"LIT_{d_fmt}"; _, _, lit_s = get_data_full(kl)
-    lit_p = mappa_liturgica.get(d, "")
+    # Recupera dal dizionario fisso se non c'è nel DB
+    lit_p = liturgia_fissa.get(d_fmt, "")
     val_ed = lit_s if lit_s else lit_p
     
     tit = val_ed[:50]+"..." if len(val_ed)>50 else val_ed
