@@ -3,7 +3,6 @@ import datetime
 from fpdf import FPDF
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
-import re
 import os
 import io
 import xlsxwriter
@@ -23,7 +22,7 @@ except:
     st.stop()
 
 # --- 2. DATI E STRUTTURE ---
-celebranti = [
+celebranti_standard = [
     "Selecionar...", "Pe. Pasquale", "Pe. Márcio", "Pe. Stefano", "Pe. Roberto",
     "Pe. Antonio", "Pe. Massimo", "Pe. Pinto", "Pe José Angel",
     "Celebração Ir. Felicia", "Celebração Ir. Marilda", "Celebração", "Ninguém"
@@ -42,7 +41,11 @@ nomi_mesi = {
 def get_data_full(key):
     r = df_dati[df_dati['key_id'] == key]
     if not r.empty: 
-        return (r.iloc[0]['celebrante'] if r.iloc[0]['celebrante']!="nan" else "Selecionar..."), \
+        c = r.iloc[0]['celebrante']
+        # Se c'è un valore salvato ma è 'nan' o vuoto, torna 'Selecionar...'
+        if c == "nan" or c == "": c = "Selecionar..."
+        
+        return c, \
                (r.iloc[0]['note'] if r.iloc[0]['note']!="nan" else ""), \
                (r.iloc[0]['liturgia_custom'] if 'liturgia_custom' in df_dati.columns and r.iloc[0]['liturgia_custom']!="nan" else "")
     return "Selecionar...", "", ""
@@ -71,7 +74,7 @@ def genera_excel_annuale():
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     ws_data = workbook.add_worksheet("Dati_Ref")
     ws_data.hide()
-    ws_data.write_column('A1', celebranti)
+    ws_data.write_column('A1', celebranti_standard)
 
     fmt_title = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'bg_color': '#4472C4', 'font_color': 'white', 'border': 1})
     fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
@@ -100,12 +103,10 @@ def genera_excel_annuale():
                 r_lit = df_dati[df_dati['key_id'] == lit_key]
                 lit_db = r_lit.iloc[0]['liturgia_custom'] if not r_lit.empty and r_lit.iloc[0]['liturgia_custom'] != "nan" else ""
                 
-                # Liturgia
                 if lit_db:
                     ws.merge_range(row, 0, row, 4, f"LITURGIA: {lit_db}", fmt_liturgia)
                     row += 1
                 
-                # Domenica
                 tot_righe = sum(len(x) for x in comunita_orari.values())
                 start_row = row
                 nome_mese_bello = nomi_mesi[m_num]
@@ -128,7 +129,7 @@ def genera_excel_annuale():
 
                         ws.write(current_r, 2, ora, fmt_center)
                         ws.write(current_r, 3, cel_val, fmt_normal)
-                        ws.data_validation(current_r, 3, current_r, 3, {'validate': 'list', 'source': f'=Dati_Ref!$A$1:$A${len(celebranti)}'})
+                        ws.data_validation(current_r, 3, current_r, 3, {'validate': 'list', 'source': f'=Dati_Ref!$A$1:$A${len(celebranti_standard)}'})
                         ws.write(current_r, 4, note_val, fmt_normal)
                         current_r += 1
                 row = current_r + 1 
@@ -136,21 +137,13 @@ def genera_excel_annuale():
     workbook.close()
     return output.getvalue()
 
-# --- 5. GENERATORE PDF MENSILE (2 DOMENICHE PER PAGINA) ---
+# --- 5. GENERATORE PDF ---
 def crea_pdf_mensile(m_num, m_nome):
     df_p = conn.read(worksheet="Foglio1", ttl=0).astype(str)
-    
-    # Setup PDF
-    pdf = FPDF()
-    pdf.set_auto_page_break(False) # Disabilitiamo l'autobreak per gestirlo noi
-    pdf.add_page()
-    
-    # Titolo Mese
+    pdf = FPDF(); pdf.set_auto_page_break(False); pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, safe_encode(f"Escala - {m_nome} 2026"), ln=True, align="C")
-    pdf.ln(2)
+    pdf.cell(0, 10, safe_encode(f"Escala - {m_nome} 2026"), ln=True, align="C"); pdf.ln(2)
     
-    # Troviamo le domeniche del mese
     doms = []
     d = datetime.date(2026, 1, 1)
     d += datetime.timedelta(days=(6 - d.weekday() if d.weekday() <= 6 else 7))
@@ -158,52 +151,33 @@ def crea_pdf_mensile(m_num, m_nome):
         if d.month == m_num: doms.append(d)
         d += datetime.timedelta(days=7)
     
-    # Dimensioni Colonne
-    w_com = 45
-    w_ora = 15
-    w_cel = 55
-    w_not = 75 # Totale 190
+    w_com, w_ora, w_cel, w_not = 45, 15, 55, 75
     
     for i, dom in enumerate(doms):
-        # LOGICA 2 DOMENICHE PER PAGINA
-        # Se siamo alla 3^, 5^, 7^ domenica... creiamo una nuova pagina
         if i > 0 and i % 2 == 0:
             pdf.add_page()
             pdf.set_font("Arial", "B", 16)
-            pdf.cell(0, 10, safe_encode(f"Escala - {m_nome} 2026"), ln=True, align="C")
-            pdf.ln(5)
+            pdf.cell(0, 10, safe_encode(f"Escala - {m_nome} 2026"), ln=True, align="C"); pdf.ln(5)
         elif i > 0:
-            # Se siamo nella stessa pagina, spazio tra le due domeniche
             pdf.ln(8)
         
-        # Recupero Liturgia dal DB
-        kl = f"LIT_{dom.strftime('%d/%m/%Y')}"
-        rl = df_p[df_p['key_id']==kl]
+        kl = f"LIT_{dom.strftime('%d/%m/%Y')}"; rl = df_p[df_p['key_id']==kl]
         tit_liturgia = rl.iloc[0]['liturgia_custom'] if not rl.empty and rl.iloc[0]['liturgia_custom']!="nan" else ""
         
-        # --- RIGA 1: DATA (Grigio scuro) ---
+        # Righe Intestazione
         txt_data = f"Domingo, {dom.day} de {m_nome}"
-        pdf.set_font("Arial", "B", 10)
-        pdf.set_fill_color(200, 200, 200) # Grigio
+        pdf.set_font("Arial", "B", 10); pdf.set_fill_color(200, 200, 200)
         pdf.cell(190, 7, safe_encode(txt_data), 1, 1, 'L', 1)
         
-        # --- RIGA 2: LITURGIA (Crema/Giallo chiaro) ---
-        # La scriviamo solo se c'è testo, altrimenti riga vuota sottile o scritta generica
         txt_lit = f"LITURGIA: {tit_liturgia}" if tit_liturgia else "LITURGIA:"
-        pdf.set_font("Arial", "B", 9)
-        pdf.set_fill_color(255, 242, 204) # Crema
+        pdf.set_font("Arial", "B", 9); pdf.set_fill_color(255, 242, 204)
         pdf.cell(190, 6, safe_encode(txt_lit), 1, 1, 'L', 1)
         
-        # --- RIGA 3: INTESTAZIONI COLONNE ---
-        pdf.set_font("Arial", "B", 8)
-        pdf.set_fill_color(240, 240, 240) # Grigio chiaro
-        pdf.cell(w_com, 6, "Comunidade", 1, 0, 'C', 1)
-        pdf.cell(w_ora, 6, "Hora", 1, 0, 'C', 1)
-        pdf.cell(w_cel, 6, "Celebrante", 1, 0, 'C', 1)
-        pdf.cell(w_not, 6, "Notas", 1, 1, 'C', 1)
+        pdf.set_font("Arial", "B", 8); pdf.set_fill_color(240, 240, 240)
+        pdf.cell(w_com, 6, "Comunidade", 1, 0, 'C', 1); pdf.cell(w_ora, 6, "Hora", 1, 0, 'C', 1)
+        pdf.cell(w_cel, 6, "Celebrante", 1, 0, 'C', 1); pdf.cell(w_not, 6, "Notas", 1, 1, 'C', 1)
         
-        # --- RIGHE DATI ---
-        pdf.set_font("Arial", size=8) # Font piccolo per far entrare tutto
+        pdf.set_font("Arial", size=8)
         
         def gp(k):
             r = df_p[df_p['key_id']==k]
@@ -214,68 +188,47 @@ def crea_pdf_mensile(m_num, m_nome):
             return "---", ""
         
         for com, ors in comunita_orari.items():
-            # Altezza riga standard
             h = 6
-            
             if len(ors) == 2:
-                # CELLE UNITE: Santa Monica / Sao Miguel
-                # Salviamo la posizione Y
-                x_start = pdf.get_x()
-                y_start = pdf.get_y()
-                
-                # Cella Comunità (Alta doppio)
+                x_start = pdf.get_x(); y_start = pdf.get_y()
                 pdf.cell(w_com, h*2, safe_encode(com), 1, 0, 'L')
-                
-                # Salviamo X dopo la comunità
                 x_mid = pdf.get_x()
-                
-                # Riga 1
                 c1, n1 = gp(f"{dom.strftime('%d/%m/%Y')}_{com}_{ors[0]}")
-                pdf.cell(w_ora, h, ors[0], 1, 0, 'C')
-                pdf.cell(w_cel, h, safe_encode(c1), 1, 0, 'L')
-                pdf.cell(w_not, h, safe_encode(n1), 1, 1, 'L') # Va a capo
-                
-                # Riga 2
-                pdf.set_xy(x_mid, y_start + h) # Spostiamo cursore
+                pdf.cell(w_ora, h, ors[0], 1, 0, 'C'); pdf.cell(w_cel, h, safe_encode(c1), 1, 0, 'L'); pdf.cell(w_not, h, safe_encode(n1), 1, 1, 'L')
+                pdf.set_xy(x_mid, y_start + h)
                 c2, n2 = gp(f"{dom.strftime('%d/%m/%Y')}_{com}_{ors[1]}")
-                pdf.cell(w_ora, h, ors[1], 1, 0, 'C')
-                pdf.cell(w_cel, h, safe_encode(c2), 1, 0, 'L')
-                pdf.cell(w_not, h, safe_encode(n2), 1, 1, 'L')
-                
+                pdf.cell(w_ora, h, ors[1], 1, 0, 'C'); pdf.cell(w_cel, h, safe_encode(c2), 1, 0, 'L'); pdf.cell(w_not, h, safe_encode(n2), 1, 1, 'L')
             else:
-                # RIGA NORMALE
                 c, n = gp(f"{dom.strftime('%d/%m/%Y')}_{com}_{ors[0]}")
-                pdf.cell(w_com, h, safe_encode(com), 1, 0, 'L')
-                pdf.cell(w_ora, h, ors[0], 1, 0, 'C')
-                pdf.cell(w_cel, h, safe_encode(c), 1, 0, 'L')
-                pdf.cell(w_not, h, safe_encode(n), 1, 1, 'L')
-    
+                pdf.cell(w_com, h, safe_encode(com), 1, 0, 'L'); pdf.cell(w_ora, h, ors[0], 1, 0, 'C')
+                pdf.cell(w_cel, h, safe_encode(c), 1, 0, 'L'); pdf.cell(w_not, h, safe_encode(n), 1, 1, 'L')
     return pdf.output(dest='S').encode('latin-1','replace')
 
 # --- 6. INTERFACCIA UTENTE ---
 with st.sidebar:
     st.image("https://www.vaticannews.va/content/dam/vaticannews/images/chiesa/vaticano/2018/06/05/1528189815591.jpg/_jcr_content/renditions/cq5dam.web.1280.1280.jpeg", width=100)
     st.title("Menu")
-    
     m_sel = st.selectbox("Selecione o Mês:", list(nomi_mesi.values()))
     m_num = [k for k,v in nomi_mesi.items() if v==m_sel][0]
     
     st.divider()
-    st.markdown("### 💾 Backup Excel")
+    
+    # INTERRUTTORE MAGICO PER SCRITTURA LIBERA
+    st.markdown("### 🛠️ Opções")
+    modo_libero = st.checkbox("✍️ Ativar Escrita Livre", help="Marque para escrever nomes que não estão na lista")
+    
+    st.divider()
     if st.button("📥 Baixar Excel Completo 2026"):
         excel_data = genera_excel_annuale()
         st.download_button("Salvar no PC", excel_data, "Turni_Messe_2026_Completo.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# MAIN PAGE
 st.header(f"📅 Escala de {m_sel} 2026")
-
 if st.button(f"📄 Baixar PDF de {m_sel}"):
     pdf_bytes = crea_pdf_mensile(m_num, m_sel)
     st.download_button("Salvar PDF", pdf_bytes, f"Messe_{m_sel}.pdf", "application/pdf")
 
 st.divider()
 
-# Logica visualizzazione mese
 doms_m = []
 d = datetime.date(2026, 1, 1)
 d += datetime.timedelta(days=(6 - d.weekday() if d.weekday() <= 6 else 7))
@@ -288,7 +241,7 @@ for d in doms_m:
     kl = f"LIT_{d_fmt}"; _, _, lit_s = get_data_full(kl)
     tit = lit_s if lit_s else ""
     
-    with st.expander(f"✨ Domingo, {d.day} de {m_sel} | {tit if tit else '(Sem Liturgia)'}", expanded=True):
+    with st.expander(f"✨ Domingo, {d.day} de {m_sel} | {tit if tit else '(LITURGIA)'}", expanded=True):
         st.text_input(f"📖 Liturgia {d.day}/{m_sel}", value=tit, key=f"t_{kl}", on_change=lambda k=kl: update_db(k, "","",st.session_state[f"t_{k}"]))
         
         cols = st.columns([2,1,2,3]); cols[0].markdown("**Comunidade**"); cols[1].markdown("**Hora**"); cols[2].markdown("**Cel**"); cols[3].markdown("**Notas**")
@@ -299,7 +252,23 @@ for d in doms_m:
                 else: r[0].markdown("↳")
                 r[1].write(ora)
                 cel, note, _ = get_data_full(kid)
-                ic = celebranti.index(cel) if cel in celebranti else 0
-                r[2].selectbox("C", celebranti, index=ic, key=f"s_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
+                
+                # --- LOGICA IBRIDA TENDINA / TESTO ---
+                if modo_libero:
+                    # Modalità Scrittura Libera: Casella di testo semplice
+                    r[2].text_input("C", value=cel, key=f"s_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
+                else:
+                    # Modalità Tendina: Ma protetta contro errori
+                    # 1. Creiamo la lista delle opzioni
+                    opzioni_correnti = celebranti_standard.copy()
+                    # 2. Se il valore nel DB (cel) non è nella lista, lo aggiungiamo!
+                    if cel not in opzioni_correnti:
+                        opzioni_correnti.append(cel)
+                    
+                    # 3. Trova l'indice corretto
+                    idx_c = opzioni_correnti.index(cel)
+                    
+                    r[2].selectbox("C", opzioni_correnti, index=idx_c, key=f"s_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
+                
                 r[3].text_input("N", value=note, key=f"n_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
             st.write("")
