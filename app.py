@@ -42,9 +42,7 @@ def get_data_full(key):
     r = df_dati[df_dati['key_id'] == key]
     if not r.empty: 
         c = r.iloc[0]['celebrante']
-        # Se c'è un valore salvato ma è 'nan' o vuoto, torna 'Selecionar...'
         if c == "nan" or c == "": c = "Selecionar..."
-        
         return c, \
                (r.iloc[0]['note'] if r.iloc[0]['note']!="nan" else ""), \
                (r.iloc[0]['liturgia_custom'] if 'liturgia_custom' in df_dati.columns and r.iloc[0]['liturgia_custom']!="nan" else "")
@@ -68,7 +66,7 @@ def safe_encode(text):
     if text == "nan" or text is None: return ""
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-# --- 4. GENERATORE EXCEL ---
+# --- 4. GENERATORE EXCEL (MODIFICATO PER SCRITTURA LIBERA) ---
 def genera_excel_annuale():
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
@@ -128,8 +126,18 @@ def genera_excel_annuale():
                         note_val = r_cel.iloc[0]['note'] if not r_cel.empty and r_cel.iloc[0]['note'] != "nan" else ""
 
                         ws.write(current_r, 2, ora, fmt_center)
+                        
+                        # --- CELEBRANTE ---
                         ws.write(current_r, 3, cel_val, fmt_normal)
-                        ws.data_validation(current_r, 3, current_r, 3, {'validate': 'list', 'source': f'=Dati_Ref!$A$1:$A${len(celebranti_standard)}'})
+                        
+                        # QUESTA È LA MODIFICA MAGICA PER EXCEL:
+                        # 'show_error': False -> Permette di scrivere qualsiasi cosa senza errore
+                        ws.data_validation(current_r, 3, current_r, 3, {
+                            'validate': 'list',
+                            'source': f'=Dati_Ref!$A$1:$A${len(celebranti_standard)}',
+                            'show_error': False 
+                        })
+                        
                         ws.write(current_r, 4, note_val, fmt_normal)
                         current_r += 1
                 row = current_r + 1 
@@ -164,7 +172,6 @@ def crea_pdf_mensile(m_num, m_nome):
         kl = f"LIT_{dom.strftime('%d/%m/%Y')}"; rl = df_p[df_p['key_id']==kl]
         tit_liturgia = rl.iloc[0]['liturgia_custom'] if not rl.empty and rl.iloc[0]['liturgia_custom']!="nan" else ""
         
-        # Righe Intestazione
         txt_data = f"Domingo, {dom.day} de {m_nome}"
         pdf.set_font("Arial", "B", 10); pdf.set_fill_color(200, 200, 200)
         pdf.cell(190, 7, safe_encode(txt_data), 1, 1, 'L', 1)
@@ -213,7 +220,6 @@ with st.sidebar:
     
     st.divider()
     
-    # INTERRUTTORE MAGICO PER SCRITTURA LIBERA
     st.markdown("### 🛠️ Opções")
     modo_libero = st.checkbox("✍️ Ativar Escrita Livre", help="Marque para escrever nomes que não estão na lista")
     
@@ -253,21 +259,12 @@ for d in doms_m:
                 r[1].write(ora)
                 cel, note, _ = get_data_full(kid)
                 
-                # --- LOGICA IBRIDA TENDINA / TESTO ---
                 if modo_libero:
-                    # Modalità Scrittura Libera: Casella di testo semplice
                     r[2].text_input("C", value=cel, key=f"s_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
                 else:
-                    # Modalità Tendina: Ma protetta contro errori
-                    # 1. Creiamo la lista delle opzioni
                     opzioni_correnti = celebranti_standard.copy()
-                    # 2. Se il valore nel DB (cel) non è nella lista, lo aggiungiamo!
-                    if cel not in opzioni_correnti:
-                        opzioni_correnti.append(cel)
-                    
-                    # 3. Trova l'indice corretto
+                    if cel not in opzioni_correnti: opzioni_correnti.append(cel)
                     idx_c = opzioni_correnti.index(cel)
-                    
                     r[2].selectbox("C", opzioni_correnti, index=idx_c, key=f"s_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
                 
                 r[3].text_input("N", value=note, key=f"n_{kid}", label_visibility="collapsed", on_change=lambda k=kid: update_db(k, st.session_state[f"s_{k}"], st.session_state[f"n_{k}"], None))
